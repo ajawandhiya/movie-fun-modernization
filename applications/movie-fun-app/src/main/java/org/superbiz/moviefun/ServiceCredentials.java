@@ -1,38 +1,63 @@
 package org.superbiz.moviefun;
 
-import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 import java.io.IOException;
-import java.util.Objects;
+import java.util.Collection;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
 
 public class ServiceCredentials {
 
-    private final String vcapServices;
+    private static final ObjectMapper objectMapper = new ObjectMapper();
+    private static final TypeReference<Map<String, List<VcapService>>> jsonType = new TypeReference<Map<String, List<VcapService>>>() {
+    };
 
-    public ServiceCredentials(String vcapServices) {
-        this.vcapServices = vcapServices;
+    static {
+        objectMapper.configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
     }
 
-    public String getCredential(String serviceName, String serviceType, String credentialKey) {
-        ObjectMapper objectMapper = new ObjectMapper();
+    private final String vcapServicesJson;
 
-        JsonNode root;
+    public ServiceCredentials(String vcapServicesJson) {
+        this.vcapServicesJson = vcapServicesJson;
+    }
+
+    public String getCredential(String name, String serviceName, String credentialKey) {
+
+        Map<String, List<VcapService>> vcapServices;
 
         try {
-            root = objectMapper.readTree(vcapServices);
+            vcapServices = objectMapper.readValue(vcapServicesJson, jsonType);
+
+            return vcapServices
+                    .values()
+                    .stream()
+                    .flatMap(Collection::stream)
+                    .filter(service -> service.name.equalsIgnoreCase(serviceName))
+                    .findFirst()
+                    .map(service -> service.credentials)
+                    .flatMap(credentials -> Optional.ofNullable((String) credentials.get(credentialKey)))
+                    .orElseThrow(() -> new IllegalStateException("No " + serviceName + " found in VCAP_SERVICES"));
+
         } catch (IOException e) {
             throw new IllegalStateException("No VCAP_SERVICES found", e);
         }
+    }
 
-        JsonNode services = root.path(serviceType);
+    static class VcapService {
+        String name;
+        Map<String, Object> credentials;
 
-        for (JsonNode service : services) {
-            if (Objects.equals(service.get("name").asText(), serviceName)) {
-                return service.get("credentials").get(credentialKey).asText();
-            }
+        void setName(String name) {
+            this.name = name;
         }
 
-        throw new IllegalStateException("No "+ serviceName + " found in VCAP_SERVICES");
+        void setCredentials(Map<String, Object> credentials) {
+            this.credentials = credentials;
+        }
     }
 }
